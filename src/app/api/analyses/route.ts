@@ -81,19 +81,22 @@ export async function GET(request: NextRequest) {
 
     // If no vector query, perform simple paginated query ordered by created_at
     if (!query) {
-      const { data, error, count } = await client.from('analyses').select('id,company_name,job_title,analysis,ai_analysis,created_at', { count: 'exact' }).order('created_at', { ascending: false }).range((page - 1) * perPage, page * perPage - 1)
+      const { data, error, count } = await client.from('analyses').select('id,company_name,job_title,analysis,ai_analysis,company_profile_summary,job_description_summary,resume_summary,created_at', { count: 'exact' }).order('created_at', { ascending: false }).range((page - 1) * perPage, page * perPage - 1)
       if (error) {
         logEvent('ERROR', 'GET /api/analyses', 'Supabase list failed', { error: String(error) })
         return NextResponse.json({ error: 'Failed to fetch analyses' }, { status: 500 })
       }
 
-      // Anonymize returned rows
+      // Anonymize returned rows and prefer short summaries instead of full content
       const items = (data || []).map((r: Record<string, unknown>) => ({
         id: r.id,
         company_name: anonymizeText(String(r.company_name || '')),
         job_title: anonymizeText(String(r.job_title || '')),
         analysis: anonymizeAny(r.analysis),
         ai_analysis: anonymizeText(String(r.ai_analysis || '')),
+        company_profile_summary: anonymizeText(String(r.company_profile_summary || '')),
+        job_description_summary: anonymizeText(String(r.job_description_summary || '')),
+        resume_summary: anonymizeText(String(r.resume_summary || '')),
         created_at: r.created_at
       }))
 
@@ -126,7 +129,7 @@ export async function GET(request: NextRequest) {
     if (!queryEmbedding) {
       // No embedding available; fallback to text match using ilike on job_title/company_name and pagination
       const match = `%${query.replace(/%/g, '\\%')}%`
-      const { data, error, count } = await client.from('analyses').select('id,company_name,job_title,analysis,ai_analysis,created_at', { count: 'exact' }).or(`company_name.ilike.${match},job_title.ilike.${match}`).order('created_at', { ascending: false }).range((page - 1) * perPage, page * perPage - 1)
+      const { data, error, count } = await client.from('analyses').select('id,company_name,job_title,analysis,ai_analysis,company_profile_summary,job_description_summary,resume_summary,created_at', { count: 'exact' }).or(`company_name.ilike.${match},job_title.ilike.${match}`).order('created_at', { ascending: false }).range((page - 1) * perPage, page * perPage - 1)
       if (error) {
         logEvent('ERROR', 'GET /api/analyses', 'Supabase search failed', { error: String(error) })
         return NextResponse.json({ error: 'Failed to search analyses' }, { status: 500 })
@@ -137,6 +140,9 @@ export async function GET(request: NextRequest) {
         job_title: anonymizeText(String(r.job_title || '')),
         analysis: anonymizeAny(r.analysis),
         ai_analysis: anonymizeText(String(r.ai_analysis || '')),
+        company_profile_summary: anonymizeText(String(r.company_profile_summary || '')),
+        job_description_summary: anonymizeText(String(r.job_description_summary || '')),
+        resume_summary: anonymizeText(String(r.resume_summary || '')),
         created_at: r.created_at
       }))
       return NextResponse.json({ items, page, per_page: perPage, total: count ?? items.length })
@@ -145,7 +151,7 @@ export async function GET(request: NextRequest) {
     // We have a query embedding — fetch a window of candidate rows that have embeddings (vector or embedding_json)
     // Limiting to a reasonable window to avoid large memory scans; tune `candidateLimit` as needed.
     const candidateLimit = 1000
-    const { data: rawCandidates, error: candErr } = await client.from('analyses').select('id,company_name,job_title,analysis,ai_analysis,created_at,embedding,embedding_json').order('created_at', { ascending: false }).limit(candidateLimit)
+    const { data: rawCandidates, error: candErr } = await client.from('analyses').select('id,company_name,job_title,analysis,ai_analysis,company_profile_summary,job_description_summary,resume_summary,created_at,embedding,embedding_json').order('created_at', { ascending: false }).limit(candidateLimit)
     if (candErr) {
       logEvent('ERROR', 'GET /api/analyses', 'Failed to fetch candidate rows for vector search', { error: String(candErr) })
       return NextResponse.json({ error: 'Vector search failed' }, { status: 500 })
@@ -183,6 +189,9 @@ export async function GET(request: NextRequest) {
       job_title: anonymizeText(String(s.row.job_title || '')),
       analysis: anonymizeAny(s.row.analysis),
       ai_analysis: anonymizeText(String(s.row.ai_analysis || '')),
+      company_profile_summary: anonymizeText(String(s.row.company_profile_summary || '')),
+      job_description_summary: anonymizeText(String(s.row.job_description_summary || '')),
+      resume_summary: anonymizeText(String(s.row.resume_summary || '')),
       created_at: s.row.created_at,
       score: s.score
     }))
@@ -261,7 +270,7 @@ export async function POST(request: NextRequest) {
     const client = createAdminClient()
 
     if (!query) {
-      const { data, error, count } = await client.from('analyses').select('id,company_name,job_title,analysis,ai_analysis,created_at', { count: 'exact' }).order('created_at', { ascending: false }).range((page - 1) * perPage, page * perPage - 1)
+      const { data, error, count } = await client.from('analyses').select('id,company_name,job_title,analysis,ai_analysis,company_profile_summary,job_description_summary,resume_summary,created_at', { count: 'exact' }).order('created_at', { ascending: false }).range((page - 1) * perPage, page * perPage - 1)
       if (error) {
         logEvent('ERROR', 'POST /api/analyses', 'Supabase list failed', { error: String(error) })
         return NextResponse.json({ error: 'Failed to fetch analyses' }, { status: 500 })
@@ -273,6 +282,9 @@ export async function POST(request: NextRequest) {
         job_title: anonymizeText(String(r.job_title || '')),
         analysis: anonymizeAny(r.analysis),
         ai_analysis: anonymizeText(String(r.ai_analysis || '')),
+        company_profile_summary: anonymizeText(String(r.company_profile_summary || '')),
+        job_description_summary: anonymizeText(String(r.job_description_summary || '')),
+        resume_summary: anonymizeText(String(r.resume_summary || '')),
         created_at: r.created_at
       }))
 
@@ -304,7 +316,7 @@ export async function POST(request: NextRequest) {
 
     if (!queryEmbedding) {
       const match = `%${String(query).replace(/%/g, '\\%')}%`
-      const { data, error, count } = await client.from('analyses').select('id,company_name,job_title,analysis,ai_analysis,created_at', { count: 'exact' }).or(`company_name.ilike.${match},job_title.ilike.${match}`).order('created_at', { ascending: false }).range((page - 1) * perPage, page * perPage - 1)
+      const { data, error, count } = await client.from('analyses').select('id,company_name,job_title,analysis,ai_analysis,company_profile_summary,job_description_summary,resume_summary,created_at', { count: 'exact' }).or(`company_name.ilike.${match},job_title.ilike.${match}`).order('created_at', { ascending: false }).range((page - 1) * perPage, page * perPage - 1)
       if (error) {
         logEvent('ERROR', 'POST /api/analyses', 'Supabase search failed', { error: String(error) })
         return NextResponse.json({ error: 'Failed to search analyses' }, { status: 500 })
@@ -315,13 +327,16 @@ export async function POST(request: NextRequest) {
         job_title: anonymizeText(String(r.job_title || '')),
         analysis: anonymizeAny(r.analysis),
         ai_analysis: anonymizeText(String(r.ai_analysis || '')),
+        company_profile_summary: anonymizeText(String(r.company_profile_summary || '')),
+        job_description_summary: anonymizeText(String(r.job_description_summary || '')),
+        resume_summary: anonymizeText(String(r.resume_summary || '')),
         created_at: r.created_at
       }))
       return NextResponse.json({ items, page, per_page: perPage, total: count ?? items.length })
     }
 
     const candidateLimit = 1000
-    const { data: rawCandidates, error: candErr } = await client.from('analyses').select('id,company_name,job_title,analysis,ai_analysis,created_at,embedding,embedding_json').order('created_at', { ascending: false }).limit(candidateLimit)
+    const { data: rawCandidates, error: candErr } = await client.from('analyses').select('id,company_name,job_title,analysis,ai_analysis,company_profile_summary,job_description_summary,resume_summary,created_at,embedding,embedding_json').order('created_at', { ascending: false }).limit(candidateLimit)
     if (candErr) {
       logEvent('ERROR', 'POST /api/analyses', 'Failed to fetch candidate rows for vector search', { error: String(candErr) })
       return NextResponse.json({ error: 'Vector search failed' }, { status: 500 })
@@ -352,6 +367,9 @@ export async function POST(request: NextRequest) {
       job_title: anonymizeText(String(s.row.job_title || '')),
       analysis: anonymizeAny(s.row.analysis),
       ai_analysis: anonymizeText(String(s.row.ai_analysis || '')),
+      company_profile_summary: anonymizeText(String(s.row.company_profile_summary || '')),
+      job_description_summary: anonymizeText(String(s.row.job_description_summary || '')),
+      resume_summary: anonymizeText(String(s.row.resume_summary || '')),
       created_at: s.row.created_at,
       score: s.score
     }))

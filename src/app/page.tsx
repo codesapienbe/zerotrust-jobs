@@ -6,7 +6,7 @@ import PageHeader from '../components/PageHeader'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { useAppStore } from '../lib/store'
-import type { AppStore } from '../lib/store'
+import { formatCompanyType } from '../lib/utils'
 
 interface FormData {
   companyName: string
@@ -39,6 +39,10 @@ interface AnalysisResult {
     salaryExpectation: string
   }
   aiAnalysis?: string
+  // Prefer server-provided short summaries when available
+  company_profile_summary?: string
+  job_description_summary?: string
+  resume_summary?: string
 }
 
 const STEPS = [
@@ -65,6 +69,7 @@ export default function HomePage() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [result, setResult] = useState<AnalysisResult | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [aiOpen, setAiOpen] = useState<boolean>(false)
 
   // Autosave: load saved form on mount and persist on changes (debounced)
   const saveTimer = useRef<number | null>(null)
@@ -147,7 +152,9 @@ export default function HomePage() {
   }
 
   const renderProgress = () => {
-    const pct = Math.round(((stepIndex + 1) / STEPS.length) * 100)
+    // Cap progress at 100% — when showing results stepIndex may equal STEPS.length
+    const displayIndex = Math.min(stepIndex, STEPS.length - 1)
+    const pct = Math.min(100, Math.round(((displayIndex + 1) / STEPS.length) * 100))
     return (
       <div className="w-full mb-4">
         <div className="flex items-center justify-between mb-2">
@@ -224,6 +231,30 @@ export default function HomePage() {
         </div>
         <div className="form-label">Plain text input — will be structured in the final report.</div>
       </label>
+    )
+  }
+
+  // Small reusable summary block with truncation and copy support
+  const SummaryBlock = ({ title, text, limit = 300 }: { title: string; text?: string; limit?: number }) => {
+    const [open, setOpen] = useState<boolean>(false)
+    const trimmed = String(text || '').trim()
+    const short = trimmed.length > limit ? trimmed.substring(0, limit).trim() + '…' : trimmed
+
+    const copyText = async () => {
+      try { await navigator.clipboard.writeText(trimmed) } catch (e) { /* ignore copy errors */ }
+    }
+
+    return (
+      <div className="mt-4">
+        <div className="flex items-start justify-between">
+          <div className="font-semibold">{title}</div>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={copyText} className="text-xs px-2 py-1 border rounded bg-white text-gray-700">Copy</button>
+            {trimmed.length > limit && (<button type="button" onClick={() => setOpen(o => !o)} className="text-xs px-2 py-1 border rounded bg-white text-gray-700">{open ? 'Show less' : 'Show more'}</button>)}
+          </div>
+        </div>
+        <div className="mt-2 text-sm text-gray-600" style={{ fontSize: '0.95rem' }}>{open ? trimmed || '—' : (short || '—')}</div>
+      </div>
     )
   }
 
@@ -313,26 +344,49 @@ export default function HomePage() {
         <div className="text-sm text-gray-700 mb-4">Overall Risk: <strong className="ml-2">{result.overallRisk}</strong></div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="border rounded p-3 bg-gray-50"><div className="text-xs text-gray-500">Risk Score</div><div className="text-xl font-bold">{result.riskScore}/100</div></div>
-          <div className="border rounded p-3 bg-gray-50"><div className="text-xs text-gray-500">Company Type</div><div className="text-xl font-bold">{result.companyType.replace('_', ' ')}</div></div>
+          <div className="border rounded p-3 bg-gray-50"><div className="text-xs text-gray-500">Company Type</div><div className="text-xl font-bold">{formatCompanyType(result.companyType as any)}</div></div>
         </div>
 
         <div className="mt-4"><div className="font-semibold">Recommendations</div><ul className="list-disc pl-5 mt-2 text-sm text-gray-700">{result.recommendations.map((r, i) => <li key={i}>{r}</li>)}</ul></div>
 
         <div className="mt-6">
-          <div className="font-semibold">Company Profile</div>
-          <div className="mt-2 prose max-w-full" dangerouslySetInnerHTML={renderMarkdown(formData.companyProfile)} />
+          <div className="font-semibold">Key Findings</div>
+          <ul className="list-disc pl-5 mt-2 text-sm text-gray-700">
+            {result.keyFindings?.map((k, i) => <li key={i}>{k}</li>)}
+          </ul>
 
-          <div className="font-semibold mt-4">Job Description</div>
-          <div className="mt-2 prose max-w-full" dangerouslySetInnerHTML={renderMarkdown(formData.jobDescription)} />
+          <div className="font-semibold mt-4">Company Analysis</div>
+          <div className="mt-2 text-sm text-gray-700">
+            <div><strong>Reputation:</strong> {result.companyAnalysis?.reputation || '—'}</div>
+            <div><strong>Stability:</strong> {result.companyAnalysis?.stability || '—'}</div>
+            <div><strong>Career prospects:</strong> {result.companyAnalysis?.careerProspects || '—'}</div>
+            {result.companyAnalysis?.redFlags && result.companyAnalysis.redFlags.length > 0 && (
+              <div className="mt-2">
+                <div className="text-sm font-semibold">Red flags</div>
+                <ul className="list-disc pl-5 mt-1 text-sm text-gray-700">{result.companyAnalysis.redFlags.map((f, i) => <li key={i}>{f}</li>)}</ul>
+              </div>
+            )}
+          </div>
 
-          <div className="font-semibold mt-4">Candidate Resume</div>
-          <div className="mt-2 prose max-w-full" dangerouslySetInnerHTML={renderMarkdown(formData.resumeContent)} />
+          <SummaryBlock title="Company Profile" text={result.company_profile_summary || formData.companyProfile} limit={300} />
+          <SummaryBlock title="Job Description" text={result.job_description_summary || formData.jobDescription} limit={300} />
+          <SummaryBlock title="Candidate Resume" text={result.resume_summary || formData.resumeContent} limit={300} />
 
           {result.aiAnalysis && (
-            <>
-              <div className="font-semibold mt-4">AI Analysis</div>
-              <div className="mt-2 prose max-w-full" dangerouslySetInnerHTML={renderMarkdown(result.aiAnalysis)} />
-            </>
+            <div className="mt-4">
+              <div className="flex items-center justify-between">
+                <div className="font-semibold">AI Analysis</div>
+                <div className="flex items-center gap-2">
+                  <button type="button" onClick={() => { navigator.clipboard?.writeText(result.aiAnalysis || '') }} className="text-xs px-2 py-1 border rounded bg-white text-gray-700">Copy</button>
+                  <button type="button" onClick={() => setAiOpen(o => !o)} className="text-xs px-2 py-1 border rounded bg-white text-gray-700">{aiOpen ? 'Collapse' : 'Expand'}</button>
+                </div>
+              </div>
+              {aiOpen ? (
+                <div className="mt-2 prose max-w-full" dangerouslySetInnerHTML={renderMarkdown(result.aiAnalysis)} />
+              ) : (
+                <div className="mt-2 text-sm text-gray-600" style={{ fontSize: '0.95rem' }}>{String(result.aiAnalysis || '').substring(0, 400)}{(result.aiAnalysis || '').length > 400 ? '…' : ''}</div>
+              )}
+            </div>
           )}
         </div>
       </div>

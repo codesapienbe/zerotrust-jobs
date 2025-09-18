@@ -1,0 +1,52 @@
+name: CI - Migrations & Build
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  migrate-and-build:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Run DB migrations
+        if: env.DATABASE_URL != ''
+        run: |
+          set -euo pipefail
+          echo "Using DATABASE_URL: ${DATABASE_URL}"
+          # Ensure migration tracking table exists
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "CREATE TABLE IF NOT EXISTS schema_migrations (id SERIAL PRIMARY KEY, filename TEXT UNIQUE NOT NULL, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())"
+          for f in supabase_migrations/*.sql; do
+            [ -f "$f" ] || continue
+            file=$(basename "$f")
+            exists=$(psql "$DATABASE_URL" -tAc "SELECT 1 FROM schema_migrations WHERE filename = '$file' LIMIT 1")
+            if [ "$exists" = '1' ]; then
+              echo "Skipping already applied migration: $file"
+              continue
+            fi
+            echo "Applying migration: $file"
+            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$f"
+            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "INSERT INTO schema_migrations(filename) VALUES ('$file')"
+          done
+
+      - name: Build
+        run: npm run build 

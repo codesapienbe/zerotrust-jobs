@@ -29,6 +29,10 @@ interface Analysis {
   aiAnalysis: string
   researchData?: { total_applications: number | null; third_party_percentage: number | null; latest_months: Record<string, unknown> }
   sampleApplications?: SampleApplication[]
+  // Short summaries (generated server-side for UI truncation)
+  company_profile_summary?: string
+  job_description_summary?: string
+  resume_summary?: string
   [key: string]: unknown
 }
 
@@ -156,8 +160,8 @@ export async function POST(request: NextRequest) {
       websiteContent = await scrapeCompanyWebsite(firecrawl, companyWebsite)
     }
 
-    // Categorize company
-    const companyType = categorizeCompany(companyName)
+    // Categorize company (allow reassignment if we can improve via heuristics / AI)
+    let companyType = categorizeCompany(companyName)
 
     // Calculate initial risk factors
     const combinedText = `${jobDescription || ''} ${companyProfile || ''}`
@@ -236,6 +240,74 @@ export async function POST(request: NextRequest) {
       logEvent('WARN', 'POST /api/analyze', 'Failed to load sample applications', { error: String(e) })
     }
 
+    // Best-effort: generate short summaries for UI (non-blocking on failure)
+    let company_profile_summary = ''
+    let job_description_summary = ''
+    let resume_summary = ''
+    try {
+      const summariseWithGroq = async (label: string, input: string) => {
+        if (!input || !input.trim()) return ''
+        try {
+          // Strong, deterministic prompt to force a concise single-sentence output.
+          const system = 'You are a concise summarization assistant that outputs exactly one short sentence (no bullets, no commentary).'
+          const user = `Please summarize the following ${label} in one short sentence of no more than 20 words. Reply with only the summary sentence and nothing else.\n\n${input}`
+          const comp = await groq.chat.completions.create({
+            messages: [
+              { role: 'system', content: system },
+              { role: 'user', content: user }
+            ],
+            model: 'mixtral-8x7b-32768',
+            temperature: 0.0,
+            max_tokens: 40,
+          })
+
+          const reply = comp.choices?.[0]?.message?.content?.trim() || ''
+          if (reply) return reply
+
+          // Fallback: deterministic heuristic
+          const firstLine = input.split('\n').map(l => l.trim()).filter(Boolean)[0] || ''
+          if (firstLine) return firstLine.length > 120 ? firstLine.substring(0, 117).trim() + '…' : firstLine
+          return input.substring(0, 120).trim() + (input.length > 120 ? '…' : '')
+        } catch (e) {
+          logEvent('WARN', 'summarizeWithGroq', 'Summarization failed', { label, error: String(e) })
+          // Deterministic fallback when AI fails
+          const firstLine = input.split('\n').map(l => l.trim()).filter(Boolean)[0] || ''
+          if (firstLine) return firstLine.length > 120 ? firstLine.substring(0, 117).trim() + '…' : firstLine
+          return input.substring(0, 120).trim() + (input.length > 120 ? '…' : '')
+        }
+      }
+
+      // Generate summaries (prefer companyProfile, fallback to scraped website content)
+      company_profile_summary = await summariseWithGroq('company profile', (companyProfile || websiteContent || '').substring(0, 3000))
+      job_description_summary = await summariseWithGroq('job description', (jobDescription || '').substring(0, 3000))
+      resume_summary = await summariseWithGroq('candidate resume', (resumeContent || '').substring(0, 3000))
+    } catch (e) {
+      logEvent('WARN', 'POST /api/analyze', 'Summarization step failed', { error: String(e) })
+    }
+
+    // If company type remains UNKNOWN, attempt an AI-assisted classification using provided profile/website/description
+    if (companyType === 'UNKNOWN') {
+      try {
+        const classifyPrompt = `Classify the company into one of the following categories exactly: DIRECT_EMPLOYER, IT_CONSULTANCY, RECRUITMENT_AGENCY, STAFFING_AGENCY, UNKNOWN.\nCompany name: ${companyName}\nCompany profile: ${companyProfile}\nWebsite content: ${websiteContent}\nJob description: ${jobDescription}`
+        const clsResp = await groq.chat.completions.create({
+          messages: [
+            { role: 'system', content: 'You are a classification assistant. Reply with a single keyword from the allowed set.' },
+            { role: 'user', content: classifyPrompt }
+          ],
+          model: 'mixtral-8x7b-32768',
+          temperature: 0.0,
+          max_tokens: 8
+        })
+        const raw = clsResp.choices?.[0]?.message?.content?.trim()?.toUpperCase() || ''
+        const match = raw.match(/DIRECT_EMPLOYER|IT_CONSULTANCY|RECRUITMENT_AGENCY|STAFFING_AGENCY|UNKNOWN/)
+        if (match) {
+          companyType = match[0] as keyof typeof RISK_METRICS
+        }
+      } catch (e) {
+        logEvent('WARN', 'POST /api/analyze', 'AI-assisted company classification failed', { error: String(e) })
+      }
+    }
+
     const analysis: Analysis = {
       overallRisk,
       riskScore,
@@ -268,6 +340,10 @@ export async function POST(request: NextRequest) {
                         'Limited - short-term assignments typical',
         redFlags
       },
+      // Attach generated short summaries for client-side display / truncation
+      company_profile_summary: company_profile_summary || undefined,
+      job_description_summary: job_description_summary || undefined,
+      resume_summary: resume_summary || undefined,
       fitAnalysis: {
         skillMatch: Math.floor(Math.random() * 30) + 70,
         experienceMatch: Math.floor(Math.random() * 25) + 65,
@@ -396,6 +472,10 @@ export async function POST(request: NextRequest) {
         input_payload: storedInputPayload,
         analysis: anonymizedAnalysis,
         ai_analysis: aiAnalysis ? anonymizeText(aiAnalysis) : null,
+        // Persist server-generated short summaries when available (sanitized and length-limited)
+        company_profile_summary: company_profile_summary ? anonymizeText(company_profile_summary).substring(0, 500) : null,
+        job_description_summary: job_description_summary ? anonymizeText(job_description_summary).substring(0, 500) : null,
+        resume_summary: resume_summary ? anonymizeText(resume_summary).substring(0, 500) : null,
         created_at: new Date().toISOString()
       }
 
