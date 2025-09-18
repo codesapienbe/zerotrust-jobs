@@ -1,103 +1,509 @@
-import Image from "next/image";
+'use client'
 
-export default function Home() {
-  return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+import React, { useState, useEffect, useRef } from 'react'
+import { CheckCircle, XCircle, ArrowRight, ArrowLeft, Building2, User, FileText } from 'lucide-react'
+import PageHeader from '../components/PageHeader'
+import { marked } from 'marked'
+import DOMPurify from 'dompurify'
+import { useAppStore } from '../lib/store'
+import type { AppStore } from '../lib/store'
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+interface FormData {
+  companyName: string
+  jobTitle: string
+  companyWebsite: string
+  companyProfile: string
+  jobDescription: string
+  resumeContent: string
+  additionalInfo: string
+}
+
+interface AnalysisResult {
+  overallRisk: 'LOW' | 'MEDIUM' | 'HIGH'
+  riskScore: number
+  companyType: string
+  shouldApply: boolean
+  keyFindings: string[]
+  riskFactors: string[]
+  recommendations: string[]
+  companyAnalysis: {
+    reputation: string
+    stability: string
+    careerProspects: string
+    redFlags: string[]
+  }
+  fitAnalysis: {
+    skillMatch: number
+    experienceMatch: number
+    culturefit: string
+    salaryExpectation: string
+  }
+  aiAnalysis?: string
+}
+
+const STEPS = [
+  { id: 'company', title: 'Company' },
+  { id: 'job', title: 'Job' },
+  { id: 'you', title: 'You' },
+  { id: 'review', title: 'Review' },
+]
+
+const HUMOR_HINT = "don't worry — just copy/paste the content, even if it's messy; I'll organize it for you."
+
+export default function HomePage() {
+  const [formData, setFormData] = useState<FormData>({
+    companyName: '',
+    jobTitle: '',
+    companyWebsite: '',
+    companyProfile: '',
+    jobDescription: '',
+    resumeContent: '',
+    additionalInfo: '',
+  })
+
+  const [stepIndex, setStepIndex] = useState(0)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [result, setResult] = useState<AnalysisResult | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  // Autosave: load saved form on mount and persist on changes (debounced)
+  const saveTimer = useRef<number | null>(null)
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('jobAdvisorForm')
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        setFormData(prev => ({ ...prev, ...parsed }))
+      }
+    } catch (e) {
+      // ignore
+    }
+  }, [])
+
+  useEffect(() => {
+    if (saveTimer.current) window.clearTimeout(saveTimer.current)
+    saveTimer.current = window.setTimeout(() => {
+      try { localStorage.setItem('jobAdvisorForm', JSON.stringify(formData)) } catch (e) {}
+    }, 500) as unknown as number
+
+    return () => { if (saveTimer.current) window.clearTimeout(saveTimer.current) }
+  }, [formData])
+
+  const step = STEPS[stepIndex]
+
+  const updateField = (field: keyof FormData, value: string) => {
+    setFormData(prev => ({ ...prev, [field]: value }))
+  }
+
+  const renderMarkdown = (text: string) => {
+    const raw = marked.parse(text || '')
+    const clean = DOMPurify.sanitize(raw)
+    return { __html: clean }
+  }
+
+  const validateStep = (index: number) => {
+    if (STEPS[index].id === 'company') return !!formData.companyName.trim()
+    if (STEPS[index].id === 'job') return !!formData.jobTitle.trim()
+    return true
+  }
+
+  const next = () => {
+    if (!validateStep(stepIndex)) return
+    setStepIndex(i => Math.min(i + 1, STEPS.length - 1))
+  }
+  const back = () => setStepIndex(i => Math.max(i - 1, 0))
+
+  // Read API keys from the app store (call without selector to avoid selector typing issues)
+  const store = useAppStore()
+  const storeGroqKey = store.groqApiKey
+  const storeFireKey = store.firecrawlApiKey
+
+  const handleSubmit = async () => {
+    setIsSubmitting(true)
+    setError(null)
+    setResult(null)
+
+    try {
+      const response = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-groq-api-key': storeGroqKey || '',
+          'x-firecrawl-api-key': storeFireKey || ''
+        },
+        body: JSON.stringify(formData)
+      })
+      if (!response.ok) {
+        const errBody = await response.json().catch(() => null)
+        throw new Error(errBody?.error || 'Server error')
+      }
+      const analysis: AnalysisResult = await response.json()
+      setResult(analysis)
+      setStepIndex(STEPS.length)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred')
+    } finally { setIsSubmitting(false) }
+  }
+
+  const renderProgress = () => {
+    const pct = Math.round(((stepIndex + 1) / STEPS.length) * 100)
+    return (
+      <div className="w-full mb-4">
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-sm font-medium text-gray-600">Step {Math.min(stepIndex + 1, STEPS.length)}/{STEPS.length}</div>
+          <div className="text-sm font-medium text-gray-600">{pct}%</div>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
+        <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden"><div className="h-2 bg-blue-600 rounded-full" style={{ width: `${pct}%` }} /></div>
+      </div>
+    )
+  }
+
+  interface PasteFieldProps {
+    id: string
+    label: string
+    placeholder?: string
+    rows?: number
+    value: string
+    onChange: (v: string) => void
+    onFeedback?: () => void
+  }
+
+  const PasteField = ({ id, label, placeholder, rows = 4, value, onChange, onFeedback }: PasteFieldProps) => {
+    const wrapperRef = useRef<HTMLDivElement | null>(null)
+    const flashTimer = useRef<number | null>(null)
+    const [badgeVisible, setBadgeVisible] = useState(false)
+
+    useEffect(() => {
+      return () => {
+        if (flashTimer.current) window.clearTimeout(flashTimer.current)
+      }
+    }, [])
+
+    const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+      // subtle animation to confirm paste
+      try {
+        if (wrapperRef.current) {
+          wrapperRef.current.classList.add('paste-flash')
+          setBadgeVisible(true)
+          if (flashTimer.current) window.clearTimeout(flashTimer.current)
+          flashTimer.current = window.setTimeout(() => {
+            wrapperRef.current?.classList.remove('paste-flash')
+            setBadgeVisible(false)
+          }, 900) as unknown as number
+        }
+        // trigger optional feedback callback (sound/vibrate)
+        try { onFeedback?.() } catch (e) {}
+      } catch (err) {
+        // ignore animation failures
+      }
+      // allow native paste to proceed
+    }
+
+    return (
+      <label className="block">
+        <div className="flex items-center justify-between">
+          <div className="text-sm font-semibold text-gray-700">{label}</div>
+          <div className="paste-hint" aria-hidden>
+            <span className="badge">Paste</span>
+            <span className="humor">{HUMOR_HINT}</span>
+          </div>
+        </div>
+        <div className="paste-field mt-2" ref={wrapperRef}>
+          <textarea
+            id={id}
+            className="form-textarea"
+            rows={rows}
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            onPaste={handlePaste}
+            placeholder={placeholder}
+            aria-label={label}
           />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+          <span className={`paste-badge ${badgeVisible ? 'visible' : ''}`} aria-hidden>{badgeVisible ? 'Pasted!' : ''}</span>
+        </div>
+        <div className="form-label">Plain text input — will be structured in the final report.</div>
+      </label>
+    )
+  }
+
+  const renderCompanyStep = () => (
+    <div className="space-y-4">
+      <label className="block">
+        <div className="text-sm font-semibold text-gray-700">Company name * <span className="sr-only">required</span></div>
+        <input id="companyName" className="form-input mt-2" value={formData.companyName} onChange={e => updateField('companyName', e.target.value)} placeholder="e.g., Sopra Steria" aria-label="Company name" aria-required="true" />
+      </label>
+
+      <label className="block">
+        <div className="text-sm font-semibold text-gray-700">Company website</div>
+        <input id="companyWebsite" className="form-input mt-2" value={formData.companyWebsite} onChange={e => updateField('companyWebsite', e.target.value)} placeholder="https://company.com" aria-label="Company website" />
+      </label>
+
+      <PasteField id="companyProfile" label="Company profile / description" rows={4} value={formData.companyProfile} onChange={(v: string) => updateField('companyProfile', v)} onFeedback={playFeedback} placeholder="Copy company profile or LinkedIn description..." />
     </div>
-  );
+  )
+
+  const renderJobStep = () => (
+    <div className="space-y-4">
+      <label className="block">
+        <div className="text-sm font-semibold text-gray-700">Job title * <span className="sr-only">required</span></div>
+        <input id="jobTitle" className="form-input mt-2" value={formData.jobTitle} onChange={e => updateField('jobTitle', e.target.value)} placeholder="e.g., Senior Java Developer" aria-label="Job title" aria-required="true" />
+      </label>
+
+      <PasteField id="jobDescription" label="Job description" rows={6} value={formData.jobDescription} onChange={(v: string) => updateField('jobDescription', v)} onFeedback={playFeedback} placeholder="Paste full job description..." />
+    </div>
+  )
+
+  const renderYouStep = () => (
+    <div className="space-y-4">
+      <PasteField id="resumeContent" label="Resume / CV content" rows={6} value={formData.resumeContent} onChange={(v: string) => updateField('resumeContent', v)} onFeedback={playFeedback} placeholder="Paste your resume text..." />
+      <PasteField id="additionalInfo" label="Additional info" rows={3} value={formData.additionalInfo} onChange={(v: string) => updateField('additionalInfo', v)} onFeedback={playFeedback} placeholder="Salary expectation, remote preferences, etc." />
+    </div>
+  )
+
+  const renderReviewStep = () => (
+    <div className="space-y-4">
+      <div className="bg-gray-50 border rounded p-4">
+        <div className="flex items-start justify-between">
+          <div>
+            <div className="text-xs text-gray-500">Company</div>
+            <div className="text-sm font-medium text-gray-900">{formData.companyName || '—'}</div>
+            <div className="text-xs text-gray-500">{formData.companyWebsite}</div>
+          </div>
+
+          <div className="text-right">
+            <div className="text-xs text-gray-500">Job</div>
+            <div className="text-sm font-medium text-gray-900">{formData.jobTitle || '—'}</div>
+          </div>
+        </div>
+
+        <div className="mt-3 text-sm text-gray-700">
+          <div className="font-semibold">Job description</div>
+          <div className="mt-2 text-sm text-gray-600 whitespace-pre-wrap">{formData.jobDescription || '—'}</div>
+        </div>
+
+      </div>
+
+      <div className="text-sm text-gray-600">When you submit, our analysis engine will evaluate company type, red flags and provide recommendations based on market research and AI analysis.</div>
+    </div>
+  )
+
+  const renderStepContent = () => {
+    switch (step?.id) {
+      case 'company': return renderCompanyStep()
+      case 'job': return renderJobStep()
+      case 'you': return renderYouStep()
+      case 'review': return renderReviewStep()
+      default: return null
+    }
+  }
+
+  const renderResults = () => {
+    if (!result) return null
+    return (
+      <div className="bg-white rounded-lg shadow p-6">
+        <div className="flex items-center gap-3 mb-4">
+          <CheckCircle className="w-6 h-6 text-green-600" />
+          <h3 className="text-lg font-semibold">Advisory Report</h3>
+          <div className="ml-auto flex items-center gap-2">
+            <button type="button" onClick={() => downloadMarkdown(result)} className="inline-flex items-center gap-2 px-3 py-2 rounded-md border text-sm bg-white text-gray-700 hover:bg-gray-100">Download .md</button>
+            <button type="button" onClick={() => downloadPdf(result)} className="inline-flex items-center gap-2 px-3 py-2 rounded-md bg-blue-600 text-white text-sm hover:bg-blue-700">Download PDF</button>
+          </div>
+        </div>
+        <div className="text-sm text-gray-700 mb-4">Overall Risk: <strong className="ml-2">{result.overallRisk}</strong></div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="border rounded p-3 bg-gray-50"><div className="text-xs text-gray-500">Risk Score</div><div className="text-xl font-bold">{result.riskScore}/100</div></div>
+          <div className="border rounded p-3 bg-gray-50"><div className="text-xs text-gray-500">Company Type</div><div className="text-xl font-bold">{result.companyType.replace('_', ' ')}</div></div>
+        </div>
+
+        <div className="mt-4"><div className="font-semibold">Recommendations</div><ul className="list-disc pl-5 mt-2 text-sm text-gray-700">{result.recommendations.map((r, i) => <li key={i}>{r}</li>)}</ul></div>
+
+        <div className="mt-6">
+          <div className="font-semibold">Company Profile</div>
+          <div className="mt-2 prose max-w-full" dangerouslySetInnerHTML={renderMarkdown(formData.companyProfile)} />
+
+          <div className="font-semibold mt-4">Job Description</div>
+          <div className="mt-2 prose max-w-full" dangerouslySetInnerHTML={renderMarkdown(formData.jobDescription)} />
+
+          <div className="font-semibold mt-4">Candidate Resume</div>
+          <div className="mt-2 prose max-w-full" dangerouslySetInnerHTML={renderMarkdown(formData.resumeContent)} />
+
+          {result.aiAnalysis && (
+            <>
+              <div className="font-semibold mt-4">AI Analysis</div>
+              <div className="mt-2 prose max-w-full" dangerouslySetInnerHTML={renderMarkdown(result.aiAnalysis)} />
+            </>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  // Feedback (sound + haptic) settings
+  const [feedbackEnabled, setFeedbackEnabled] = useState<boolean>(() => {
+    try { return localStorage.getItem('feedbackEnabled') === 'true' } catch { return false }
+  })
+
+  useEffect(() => { try { localStorage.setItem('feedbackEnabled', feedbackEnabled ? 'true' : 'false') } catch {} }, [feedbackEnabled])
+
+  const playFeedback = () => {
+    if (!feedbackEnabled) return
+    try {
+      // Vibration (if supported)
+      try {
+        if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+          (navigator as Navigator & { vibrate?: (pattern: number | number[]) => boolean }).vibrate?.(16)
+        }
+      } catch (e) {
+        // ignore
+      }
+
+      // Short beep via WebAudio (if supported)
+      try {
+        if (typeof window === 'undefined') return
+        const win = window as Window & { webkitAudioContext?: typeof AudioContext }
+        const Ctx = win.AudioContext ?? win.webkitAudioContext
+        if (!Ctx) return
+        const ctx = new Ctx()
+        const o = ctx.createOscillator()
+        const g = ctx.createGain()
+        o.type = 'sine'
+        o.frequency.setValueAtTime(880, ctx.currentTime)
+        g.gain.setValueAtTime(0.0001, ctx.currentTime)
+        g.gain.exponentialRampToValueAtTime(0.02, ctx.currentTime + 0.01)
+        o.connect(g)
+        g.connect(ctx.destination)
+        o.start()
+        setTimeout(() => {
+          try {
+            g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.02)
+            o.stop(ctx.currentTime + 0.03)
+            ctx.close()
+          } catch (e) {
+            // ignore
+          }
+        }, 120)
+      } catch (e) {
+        // ignore audiovisual errors
+      }
+    } catch (e) { /* ignore audiovisual errors */ }
+  }
+
+  // Helper: build a readable markdown report from analysis + form data
+  const buildMarkdown = (analysis: AnalysisResult, form: FormData) => {
+    const lines: string[] = []
+    lines.push(`# Advisory Report — ${form.companyName} — ${form.jobTitle}`)
+    lines.push('')
+    lines.push(`**Overall Risk:** ${analysis.overallRisk}`)
+    lines.push(`**Risk Score:** ${analysis.riskScore}/100`)
+    lines.push(`**Company Type:** ${analysis.companyType.replace('_', ' ')}`)
+    lines.push('')
+    lines.push('## Key Findings')
+    analysis.keyFindings.forEach(k => lines.push(`- ${k}`))
+    lines.push('')
+    lines.push('## Risk Factors')
+    analysis.riskFactors.forEach(r => lines.push(`- ${r}`))
+    lines.push('')
+    lines.push('## Recommendations')
+    analysis.recommendations.forEach(r => lines.push(`- ${r}`))
+    lines.push('')
+    lines.push('## Company Profile')
+    lines.push(form.companyProfile || '')
+    lines.push('')
+    lines.push('## Job Description')
+    lines.push(form.jobDescription || '')
+    lines.push('')
+    lines.push('## Candidate Resume')
+    lines.push(form.resumeContent || '')
+    lines.push('')
+    if (analysis.aiAnalysis) {
+      lines.push('## AI Analysis')
+      lines.push(analysis.aiAnalysis)
+    }
+    return lines.join('\n')
+  }
+
+  // Trigger download of markdown file
+  const downloadMarkdown = (analysis: AnalysisResult) => {
+    try {
+      const md = buildMarkdown(analysis, formData)
+      const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${(formData.companyName || 'analysis').replace(/[^a-z0-9-_\.]/gi, '_')}-${(formData.jobTitle || 'report').replace(/[^a-z0-9-_\.]/gi, '_')}.md`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    } catch (e) { /* ignore download errors */ }
+  }
+
+  // Generate a simple PDF using jsPDF (falls back to plain text rendering)
+  const downloadPdf = async (analysis: AnalysisResult) => {
+    try {
+      const md = buildMarkdown(analysis, formData)
+      // dynamic import to avoid top-level type issues when types are not installed
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { jsPDF } = await import('jspdf')
+      const pdf = new jsPDF({ unit: 'pt', format: 'a4' })
+      pdf.setFontSize(12)
+      const marginLeft = 40
+      const maxLineWidth = 540
+      const lines = pdf.splitTextToSize(md, maxLineWidth)
+      const cursorY = 60
+      pdf.text(lines, marginLeft, cursorY)
+      const filename = `${(formData.companyName || 'analysis').replace(/[^a-z0-9-_\.]/gi, '_')}-${(formData.jobTitle || 'report').replace(/[^a-z0-9-_\.]/gi, '_')}.pdf`
+      pdf.save(filename)
+    } catch (e) { /* ignore pdf generation errors */ }
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50 px-4 py-6 sm:px-6 lg:px-8">
+      <div className="max-w-3xl mx-auto">
+        <header className="mb-6">
+          <PageHeader
+            title="Job Application Advisor"
+            subtitle="AI-powered risk assessment & recommendations"
+            right={(
+              <div className="hidden sm:flex items-center space-x-3 text-sm text-gray-500">
+                <div className="flex items-center gap-2"><Building2 className="w-4 h-4 text-gray-400" /><span>Company</span></div>
+                <div className="flex items-center gap-2"><FileText className="w-4 h-4 text-gray-400" /><span>Job</span></div>
+                <div className="flex items-center gap-2"><User className="w-4 h-4 text-gray-400" /><span>You</span></div>
+              </div>
+            )}
+          />
+        </header>
+
+        <main>
+          <div className="bg-white border rounded-lg shadow-sm p-4 sm:p-6">
+            {renderProgress()}
+
+            <div className="flex items-center justify-between mb-4"><h2 className="text-lg font-semibold text-gray-900">{step?.title}</h2><div className="text-sm text-gray-500">{stepIndex < STEPS.length ? (stepIndex === STEPS.length - 1 ? 'Review & Submit' : `Fill details`) : ''}</div></div>
+
+            <div className="mb-4"><div key={step?.id} className="animate-slide-in">{renderStepContent()}</div></div>
+
+            <div className="flex items-center justify-between">
+              <div>
+                <button type="button" onClick={back} disabled={stepIndex === 0 || isSubmitting} className="inline-flex items-center gap-2 px-3 py-2 rounded-md border text-sm bg-white text-gray-700 disabled:opacity-50" aria-label="Back"><ArrowLeft className="w-4 h-4" />Back</button>
+              </div>
+
+              <div className="flex items-center gap-3">
+                {stepIndex < STEPS.length - 1 ? (
+                  <button type="button" onClick={next} className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-blue-600 text-white text-sm font-medium hover:bg-blue-700" aria-label="Next">Next<ArrowRight className="w-4 h-4" /></button>
+                ) : (
+                  <button type="button" onClick={handleSubmit} disabled={isSubmitting} className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-green-600 text-white text-sm font-medium hover:bg-green-700" aria-label="Submit and analyze">{isSubmitting ? 'Submitting…' : 'Submit & Analyze'}<CheckCircle className="w-4 h-4" /></button>
+                )}
+              </div>
+            </div>
+
+            {error && (<div className="mt-4 p-3 rounded border bg-red-50 text-red-700 flex items-start gap-2" role="alert"><XCircle className="w-5 h-5" /><div>{error}</div></div>)}
+
+          </div>
+
+          <div className="mt-6">{renderResults()}</div>
+        </main>
+      </div>
+    </div>
+  )
 }
