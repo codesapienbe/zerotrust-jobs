@@ -19,9 +19,9 @@
     "clsx": "^2.0.0",
     "tailwind-merge": "^2.0.0",
     "marked": "^5.0.0",
-    "dompurify": "^2.4.0",
+    "dompurify": "^3.2.7",
     "zustand": "^4.4.0",
-    "jspdf": "^2.5.1",
+    "jspdf": "^3.0.3",
     "@supabase/supabase-js": "^2.36.0"
   },
   "devDependencies": {
