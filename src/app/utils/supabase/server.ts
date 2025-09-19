@@ -122,22 +122,42 @@ export async function insertAnalysisRecord(payload: Record<string, unknown>, emb
   const client = createAdminClient()
   const baseRow: Record<string, unknown> = { ...payload }
 
+  // Helper to attempt an insert and on table-not-found, run migrations and retry once
+  const tryInsert = async (row: Record<string, unknown>) => {
+    try {
+      const { data, error } = await client.from('analyses').insert([row]).select()
+      if (error) throw error
+      return data
+    } catch (err) {
+      const errStr = String(err || '')
+      // If the error suggests the table doesn't exist, attempt to run migrations (best-effort) and retry once
+      if (DB_URL && !migrationsApplied && /relation\s+"analyses"\s+does not exist|no such table|Undefined table/i.test(errStr)) {
+        try {
+          await runMigrationsIfNeeded()
+          const { data: data2, error: error2 } = await client.from('analyses').insert([row]).select()
+          if (error2) throw error2
+          return data2
+        } catch (inner) {
+          // Log and rethrow the original context
+          try { fs.appendFileSync(path.join(process.cwd(), 'application.log'), JSON.stringify({ timestamp: new Date().toISOString(), level: 'ERROR', component: 'insertAnalysisRecord', message: 'Insert failed after running migrations', error: String(inner) }) + '\n') } catch {}
+          throw inner
+        }
+      }
+      throw err
+    }
+  }
+
   // If no embedding provided, perform a straight insert
   if (!embedding || !Array.isArray(embedding)) {
-    const { data, error } = await client.from('analyses').insert([baseRow]).select()
-    if (error) throw error
-    return data
+    return await tryInsert(baseRow)
   }
 
   // Try inserting into the native vector column first; on failure, fall back to embedding_json
   try {
-    const { data, error } = await client.from('analyses').insert([{ ...baseRow, embedding }]).select()
-    if (error) throw error
+    const data = await tryInsert({ ...baseRow, embedding })
     return data
   } catch (err) {
     // Attempt fallback into embedding_json
-    const { data, error } = await client.from('analyses').insert([{ ...baseRow, embedding_json: embedding }]).select()
-    if (error) throw error
-    return data
+    return await tryInsert({ ...baseRow, embedding_json: embedding })
   }
 }
