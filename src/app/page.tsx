@@ -43,6 +43,9 @@ interface AnalysisResult {
   company_profile_summary?: string
   job_description_summary?: string
   resume_summary?: string
+  // Storage metadata (server may attach these when persistence fails)
+  storage_saved?: boolean
+  storage_error?: string
 }
 
 const STEPS = [
@@ -68,6 +71,7 @@ export default function HomePage() {
   const [stepIndex, setStepIndex] = useState(0)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [result, setResult] = useState<AnalysisResult | null>(null)
+  const [dbSaveFailed, setDbSaveFailed] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [aiOpen, setAiOpen] = useState<boolean>(false)
 
@@ -147,6 +151,13 @@ export default function HomePage() {
       }
       const analysis: AnalysisResult = await response.json()
       setResult(analysis)
+      // If server indicates storage failed, show a friendly UI notification
+      if ((analysis as any).storage_saved === false) {
+        const short = String((analysis as any).storage_error || '').substring(0, 500)
+        setDbSaveFailed(short || 'Could not store analysis to database')
+      } else {
+        setDbSaveFailed(null)
+      }
       setStepIndex(STEPS.length)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred')
@@ -335,6 +346,18 @@ export default function HomePage() {
     if (!result) return null
     return (
       <div className="bg-white rounded-lg shadow p-6">
+        {dbSaveFailed && (
+          <div role="alert" className="mb-4 p-3 rounded border bg-yellow-50 text-yellow-800 flex items-start justify-between">
+            <div>
+              <div className="font-semibold">Could not store analysis</div>
+              <div className="text-sm mt-1">We were unable to save the analysis to the database. You can still download the report locally.</div>
+              {dbSaveFailed && <div className="mt-2 text-xs text-gray-600 break-all">Details: {dbSaveFailed}</div>}
+            </div>
+            <div className="ml-4">
+              <button type="button" onClick={() => setDbSaveFailed(null)} className="text-sm px-2 py-1 border rounded bg-white text-gray-700">Dismiss</button>
+            </div>
+          </div>
+        )}
         <div className="flex items-center gap-3 mb-4">
           <CheckCircle className="w-6 h-6 text-green-600" />
           <h3 className="text-lg font-semibold">Advisory Report</h3>

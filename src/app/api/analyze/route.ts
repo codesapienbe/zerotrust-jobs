@@ -514,6 +514,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Best-effort: persist anonymized analysis and safe input payload to Supabase (includes optional embedding)
+    let storageError: string | null = null
     try {
       const insertPayload = {
         company_name: companyName ? anonymizeText(companyName).substring(0, 200) : null,
@@ -532,10 +533,25 @@ export async function POST(request: NextRequest) {
         const insertData = await insertAnalysisRecord(insertPayload, embedding)
         logEvent('INFO', 'POST /api/analyze', 'Stored anonymized analysis record in Supabase', { id: insertData?.[0]?.id ?? null })
       } catch (innerErr) {
-        logEvent('WARN', 'POST /api/analyze', 'Supabase insert error', { error: String(innerErr) })
+        storageError = String(innerErr)
+        logEvent('WARN', 'POST /api/analyze', 'Supabase insert error', { error: storageError })
       }
     } catch (e) {
-      logEvent('WARN', 'POST /api/analyze', 'Error while attempting to persist anonymized analysis', { error: String(e) })
+      storageError = String(e)
+      logEvent('WARN', 'POST /api/analyze', 'Error while attempting to persist anonymized analysis', { error: storageError })
+    }
+
+    // Attach storage metadata to the analysis object so the client can show a friendly UI notification if needed
+    if (storageError) {
+      try {
+        // Keep message short and non-sensitive
+        analysis.storage_error = storageError.substring(0, 1000)
+        analysis.storage_saved = false
+      } catch (e) {
+        // ignore
+      }
+    } else {
+      try { analysis.storage_saved = true } catch (e) {}
     }
 
     return NextResponse.json(analysis)
