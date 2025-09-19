@@ -108,7 +108,7 @@ export default function ThemeToggle() {
   }
 
   return (
-    <button
+    <button suppressHydrationWarning={true}
       aria-label={ariaLabel}
       title={ariaLabel}
       onClick={cyclePreference}

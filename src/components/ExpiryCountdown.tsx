@@ -53,7 +53,7 @@ export default function ExpiryCountdown() {
   }
 
   return (
-    <div className="flex items-center gap-3">
+    <div suppressHydrationWarning={true} className="flex items-center gap-3">
       <div className="w-40">
         <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
           <div className={`h-2 ${color}`} style={{ width: `${Math.round(fraction * 100)}%` }} />

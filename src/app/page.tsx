@@ -21,7 +21,7 @@ interface FormData {
 interface AnalysisResult {
   overallRisk: 'LOW' | 'MEDIUM' | 'HIGH'
   riskScore: number
-  companyType: string
+  companyType: keyof typeof import('../lib/utils').RISK_METRICS
   shouldApply: boolean
   keyFindings: string[]
   riskFactors: string[]
@@ -344,7 +344,7 @@ export default function HomePage() {
         <div className="text-sm text-gray-700 mb-4">Overall Risk: <strong className="ml-2">{result.overallRisk}</strong></div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="border rounded p-3 bg-gray-50"><div className="text-xs text-gray-500">Risk Score</div><div className="text-xl font-bold">{result.riskScore}/100</div></div>
-          <div className="border rounded p-3 bg-gray-50"><div className="text-xs text-gray-500">Company Type</div><div className="text-xl font-bold">{formatCompanyType(result.companyType as any)}</div></div>
+          <div className="border rounded p-3 bg-gray-50"><div className="text-xs text-gray-500">Company Type</div><div className="text-xl font-bold">{formatCompanyType(result.companyType as keyof typeof import('../lib/utils').RISK_METRICS)}</div></div>
         </div>
 
         <div className="mt-4"><div className="font-semibold">Recommendations</div><ul className="list-disc pl-5 mt-2 text-sm text-gray-700">{result.recommendations.map((r, i) => <li key={i}>{r}</li>)}</ul></div>
@@ -452,28 +452,50 @@ export default function HomePage() {
     lines.push(`**Risk Score:** ${analysis.riskScore}/100`)
     lines.push(`**Company Type:** ${analysis.companyType.replace('_', ' ')}`)
     lines.push('')
+
     lines.push('## Key Findings')
     analysis.keyFindings.forEach(k => lines.push(`- ${k}`))
     lines.push('')
+
     lines.push('## Risk Factors')
     analysis.riskFactors.forEach(r => lines.push(`- ${r}`))
     lines.push('')
+
     lines.push('## Recommendations')
     analysis.recommendations.forEach(r => lines.push(`- ${r}`))
     lines.push('')
-    lines.push('## Company Profile')
-    lines.push(form.companyProfile || '')
-    lines.push('')
-    lines.push('## Job Description')
-    lines.push(form.jobDescription || '')
-    lines.push('')
-    lines.push('## Candidate Resume')
-    lines.push(form.resumeContent || '')
-    lines.push('')
-    if (analysis.aiAnalysis) {
-      lines.push('## AI Analysis')
-      lines.push(analysis.aiAnalysis)
+
+    // Summaries only — do not duplicate original, reference provided inputs when full content is needed
+    lines.push('## Company Profile Summary')
+    if (analysis.company_profile_summary && analysis.company_profile_summary.trim().length > 0) {
+      lines.push(analysis.company_profile_summary.trim())
+    } else {
+      lines.push('(See provided company profile)')
     }
+    lines.push('')
+
+    lines.push('## Job Description Summary')
+    if (analysis.job_description_summary && analysis.job_description_summary.trim().length > 0) {
+      lines.push(analysis.job_description_summary.trim())
+    } else {
+      lines.push('(See provided job description)')
+    }
+    lines.push('')
+
+    lines.push('## Candidate Resume Summary')
+    if (analysis.resume_summary && analysis.resume_summary.trim().length > 0) {
+      lines.push(analysis.resume_summary.trim())
+    } else {
+      lines.push('(See provided resume)')
+    }
+
+    if (analysis.aiAnalysis) {
+      lines.push('')
+      lines.push('## AI Analysis (summary)')
+      const aiShort = String(analysis.aiAnalysis || '').substring(0, 800).trim()
+      lines.push(aiShort + ((analysis.aiAnalysis || '').length > 800 ? '…' : ''))
+    }
+
     return lines.join('\n')
   }
 
@@ -546,7 +568,25 @@ export default function HomePage() {
                 {stepIndex < STEPS.length - 1 ? (
                   <button type="button" onClick={next} className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-blue-600 text-white text-sm font-medium hover:bg-blue-700" aria-label="Next">Next<ArrowRight className="w-4 h-4" /></button>
                 ) : (
-                  <button type="button" onClick={handleSubmit} disabled={isSubmitting} className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-green-600 text-white text-sm font-medium hover:bg-green-700" aria-label="Submit and analyze">{isSubmitting ? 'Submitting…' : 'Submit & Analyze'}<CheckCircle className="w-4 h-4" /></button>
+                  <button
+                    type="button"
+                    onClick={handleSubmit}
+                    disabled={isSubmitting}
+                    className={"inline-flex items-center gap-2 px-4 py-2 rounded-md bg-green-600 text-white text-sm font-medium hover:bg-green-700" + (isSubmitting ? ' cursor-wait opacity-75' : '')}
+                    aria-label="Submit and analyze"
+                  >
+                    {isSubmitting ? (
+                      <>
+                        <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" aria-hidden="true" />
+                        <span>Submitting…</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>Submit & Analyze</span>
+                        <CheckCircle className="w-4 h-4" />
+                      </>
+                    )}
+                  </button>
                 )}
               </div>
             </div>
