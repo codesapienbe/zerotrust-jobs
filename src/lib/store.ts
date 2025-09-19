@@ -2,6 +2,7 @@ import create from 'zustand'
 
 export type AppStore = {
   groqApiKey: string
+  groqModel: string
   firecrawlApiKey: string
   feedbackEnabled: boolean
   encryptedBlob?: string
@@ -9,6 +10,7 @@ export type AppStore = {
   expiryMinutes?: number
   expiryTimestamp?: number
   setGroqApiKey: (k: string) => void
+  setGroqModel: (m: string) => void
   setFirecrawlApiKey: (k: string) => void
   setFeedbackEnabled: (v: boolean) => void
   setEncryptedBlob: (b?: string) => void
@@ -44,6 +46,7 @@ function saveToStorage(state: Partial<AppStore>) {
     if (typeof window === 'undefined') return
     const payload = JSON.stringify({
       groqApiKey: state.groqApiKey || '',
+      groqModel: state.groqModel || '',
       firecrawlApiKey: state.firecrawlApiKey || '',
       feedbackEnabled: !!state.feedbackEnabled,
       encryptedBlob: state.encryptedBlob || undefined,
@@ -61,6 +64,7 @@ const persisted = loadFromStorage() || {}
 
 export const useAppStore = create<AppStore>((set, get) => ({
   groqApiKey: (persisted.groqApiKey as string) || '',
+  groqModel: (persisted.groqModel as string) || '',
   firecrawlApiKey: (persisted.firecrawlApiKey as string) || '',
   feedbackEnabled: (persisted.feedbackEnabled as boolean) || false,
   encryptedBlob: (persisted.encryptedBlob as string) || undefined,
@@ -71,6 +75,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setGroqApiKey: (k: string) => {
     set(() => ({ groqApiKey: k }))
     saveToStorage({ ...get(), groqApiKey: k })
+  },
+
+  setGroqModel: (m: string) => {
+    set(() => ({ groqModel: m }))
+    saveToStorage({ ...get(), groqModel: m })
   },
 
   setFirecrawlApiKey: (k: string) => {

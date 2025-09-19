@@ -123,6 +123,7 @@ export default function HomePage() {
   const store = useAppStore()
   const storeGroqKey = store.groqApiKey
   const storeFireKey = store.firecrawlApiKey
+  const storeGroqModel = store.groqModel
 
   const handleSubmit = async () => {
     setIsSubmitting(true)
@@ -135,7 +136,8 @@ export default function HomePage() {
         headers: {
           'Content-Type': 'application/json',
           'x-groq-api-key': storeGroqKey || '',
-          'x-firecrawl-api-key': storeFireKey || ''
+          'x-firecrawl-api-key': storeFireKey || '',
+          'x-groq-model': storeGroqModel || ''
         },
         body: JSON.stringify(formData)
       })

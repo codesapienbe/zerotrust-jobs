@@ -52,6 +52,10 @@ try {
   logEvent('WARN', 'init', 'Failed to load GROQ system prompt file', { error: String(e) })
 }
 
+// Make Groq model and embedding model configurable via environment for easy updates
+const GROQ_MODEL = (process.env.GROQ_MODEL || 'mixtral-8x7b-32768').trim()
+const GROQ_EMBEDDING_MODEL = (process.env.GROQ_EMBEDDING_MODEL || 'text-embedding-3-small').trim()
+
 function logEvent(level: 'ERROR' | 'WARN' | 'INFO' | 'DEBUG', component: string, message: string, meta: Record<string, unknown> = {}) {
   try {
     const log = {
@@ -100,25 +104,34 @@ async function analyzeWithGroq(prompt: string) {
           content: prompt
         }
       ],
-      model: 'mixtral-8x7b-32768',
+      // Use configured model (env override) so model deprecations can be handled without code changes
+      model: GROQ_MODEL,
       temperature: 0.3,
       max_tokens: 2000,
     })
 
     return completion.choices[0]?.message?.content || ''
   } catch (error) {
-    logEvent('ERROR', 'analyzeWithGroq', 'Groq analysis failed', { error: String(error) })
+    const errStr = String(error)
+    // If the model is decommissioned, log a helpful hint to set GROQ_MODEL env var
+    if (errStr.includes('model_decommissioned') || errStr.includes('model_not_found')) {
+      logEvent('ERROR', 'analyzeWithGroq', 'Groq analysis failed - model issue', { error: errStr, groq_model: GROQ_MODEL, suggestion: 'Set GROQ_MODEL env var to a supported model.' })
+    } else {
+      logEvent('ERROR', 'analyzeWithGroq', 'Groq analysis failed', { error: errStr })
+    }
     throw new Error('AI analysis failed')
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
-    // Allow API keys to be provided by client via headers (from local storage / settings UI)
+    // Allow API keys and model selection to be provided by client via headers (from local storage / settings UI)
     const headerGroq = request.headers.get('x-groq-api-key') || ''
     const headerFire = request.headers.get('x-firecrawl-api-key') || ''
+    const headerModel = request.headers.get('x-groq-model') || ''
     const groqKey = headerGroq || process.env.GROQ_API_KEY || ''
     const fireKey = headerFire || process.env.FIRECRAWL_API_KEY || ''
+    const selectedModel = headerModel || GROQ_MODEL
 
     if (!groqKey || !fireKey) {
       logEvent('ERROR', 'POST /api/analyze', 'Missing API keys', { hasGroq: !!groqKey, hasFirecrawl: !!fireKey })
@@ -192,13 +205,13 @@ export async function POST(request: NextRequest) {
           { role: 'system', content: GROQ_SYSTEM_PROMPT },
           { role: 'user', content: analysisPrompt }
         ],
-        model: 'mixtral-8x7b-32768',
+        model: selectedModel,
         temperature: 0.3,
         max_tokens: 2000,
       })
       aiAnalysis = completion.choices[0]?.message?.content || ''
     } catch (err) {
-      logEvent('WARN', 'POST /api/analyze', 'AI analysis failed, falling back to heuristics', { error: String(err) })
+      logEvent('WARN', 'POST /api/analyze', 'AI analysis failed, falling back to heuristics', { error: String(err), used_model: selectedModel })
     }
 
     // Load research data summaries from disk (best-effort, synchronous)
@@ -245,10 +258,10 @@ export async function POST(request: NextRequest) {
     let job_description_summary = ''
     let resume_summary = ''
     try {
+      // Improved summarizer: prefer AI, but use stronger extractive fallback if AI fails.
       const summariseWithGroq = async (label: string, input: string) => {
         if (!input || !input.trim()) return ''
         try {
-          // Strong, deterministic prompt to force a concise single-sentence output.
           const system = 'You are a concise summarization assistant that outputs exactly one short sentence (no bullets, no commentary).'
           const user = `Please summarize the following ${label} in one short sentence of no more than 20 words. Reply with only the summary sentence and nothing else.\n\n${input}`
           const comp = await groq.chat.completions.create({
@@ -256,24 +269,60 @@ export async function POST(request: NextRequest) {
               { role: 'system', content: system },
               { role: 'user', content: user }
             ],
-            model: 'mixtral-8x7b-32768',
+            model: selectedModel,
             temperature: 0.0,
-            max_tokens: 40,
+            max_tokens: 60,
           })
 
           const reply = comp.choices?.[0]?.message?.content?.trim() || ''
           if (reply) return reply
 
-          // Fallback: deterministic heuristic
-          const firstLine = input.split('\n').map(l => l.trim()).filter(Boolean)[0] || ''
-          if (firstLine) return firstLine.length > 120 ? firstLine.substring(0, 117).trim() + '…' : firstLine
-          return input.substring(0, 120).trim() + (input.length > 120 ? '…' : '')
+          // If AI returned empty, fallthrough to extractive summarizer
         } catch (e) {
-          logEvent('WARN', 'summarizeWithGroq', 'Summarization failed', { label, error: String(e) })
-          // Deterministic fallback when AI fails
-          const firstLine = input.split('\n').map(l => l.trim()).filter(Boolean)[0] || ''
-          if (firstLine) return firstLine.length > 120 ? firstLine.substring(0, 117).trim() + '…' : firstLine
-          return input.substring(0, 120).trim() + (input.length > 120 ? '…' : '')
+          logEvent('WARN', 'summarizeWithGroq', 'Summarization failed', { label, error: String(e), groq_model: selectedModel })
+          // continue to deterministic fallback
+        }
+
+        // Extractive deterministic summarizer (stronger heuristic): choose the first informative sentence
+        try {
+          const text = input.replace(/\s+/g, ' ').trim()
+          // Split into sentences using punctuation heuristics
+          const sentences = text.split(/(?<=[.!?])\s+/).map(s => s.trim()).filter(Boolean)
+          const verbRegex = /\b(is|are|will|provide|provides|design|develop|build|work|responsible|responsibilities|experience|looking|seeking|requires|require)\b/i
+          const keywordScore = (s: string) => {
+            let score = 0
+            if (verbRegex.test(s)) score += 2
+            if (/\b(we|our|you|team|project|role)\b/i.test(s)) score += 1
+            if (/\b(Java|Spring|Angular|React|TypeScript|Hibernate|JPA|SQL)\b/i.test(s)) score += 2
+            return score
+          }
+
+          // Prefer short-to-medium length sentences with keywords/verbs
+          let best = ''
+          let bestScore = -1
+          for (const s of sentences) {
+            const wordCount = s.split(/\s+/).length
+            if (wordCount < 4 || wordCount > 40) continue
+            const score = keywordScore(s)
+            if (score > bestScore) { bestScore = score; best = s }
+          }
+
+          if (!best && sentences.length > 0) {
+            // fallback: pick the first reasonably sized sentence
+            best = sentences.find(s => s.split(/\s+/).length <= 40) || sentences[0]
+          }
+
+          if (best) {
+            const trimmed = best.length > 120 ? best.substring(0, 117).trim() + '…' : best
+            return trimmed
+          }
+
+          // Final fallback: return a trimmed prefix
+          return text.substring(0, 120).trim() + (text.length > 120 ? '…' : '')
+        } catch (e) {
+          logEvent('WARN', 'summarizeWithGroq', 'Deterministic summarization failed', { label, error: String(e) })
+          const fallback = (input.split('\n').map(l => l.trim()).filter(Boolean)[0] || input).substring(0, 120).trim()
+          return fallback + (input.length > 120 ? '…' : '')
         }
       }
 
@@ -452,7 +501,7 @@ export async function POST(request: NextRequest) {
       if (groqEmb?.embeddings && typeof groqEmb.embeddings.create === 'function') {
         try {
           const textToEmbed = (aiAnalysis && aiAnalysis.length > 0) ? aiAnalysis : (Array.isArray(analysis.keyFindings) ? analysis.keyFindings.join(' ') : combinedText || `${companyName} ${jobTitle}`)
-          const embResp = await groqEmb.embeddings.create({ model: 'text-embedding-3-small', input: textToEmbed })
+          const embResp = await groqEmb.embeddings.create({ model: GROQ_EMBEDDING_MODEL, input: textToEmbed })
           embedding = embResp?.data?.[0]?.embedding
         } catch (e) {
           logEvent('WARN', 'POST /api/analyze', 'Groq embedding call failed', { error: String(e) })

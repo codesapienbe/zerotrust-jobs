@@ -9,10 +9,13 @@ export default function SettingsPage() {
   const groqApiKey = store.groqApiKey
   const firecrawlApiKey = store.firecrawlApiKey
   const setGroqApiKey = store.setGroqApiKey
+  const groqModel = store.groqModel
+  const setGroqModel = store.setGroqModel
   const setFirecrawlApiKey = store.setFirecrawlApiKey
   const resetStore = store.reset
 
   const [localGroq, setLocalGroq] = useState(groqApiKey)
+  const [localModel, setLocalModel] = useState(groqModel)
   const [localFire, setLocalFire] = useState(firecrawlApiKey)
   const [consent, setConsent] = useState(false)
   const expiryMinutes = store.expiryMinutes
@@ -25,6 +28,7 @@ export default function SettingsPage() {
       return
     }
     setGroqApiKey(localGroq)
+    setGroqModel(localModel)
     setFirecrawlApiKey(localFire)
     // Ensure expiry is set; default to 24 hours if not provided
     const minutes = expiryMinutes || 24 * 60
@@ -45,13 +49,19 @@ export default function SettingsPage() {
         </div>
 
         <div className="mb-4">
+          <label className="block text-sm font-medium text-gray-700">GROQ Model (optional)</label>
+          <input className="form-input mt-2" value={localModel} onChange={e => setLocalModel(e.target.value)} placeholder="e.g., mixtral-8x7b-32768 or updated model" />
+          <div className="text-xs text-gray-500 mt-1">If empty, the app will use the server-side default. Use this to override the Groq model for summarization.</div>
+        </div>
+
+        <div className="mb-4">
           <label className="block text-sm font-medium text-gray-700">FIRECRAWL API Key</label>
           <input className="form-input mt-2" value={localFire} onChange={e => setLocalFire(e.target.value)} placeholder="Enter your Firecrawl API key" />
         </div>
 
         <div className="flex items-center gap-3">
           <button className="btn-primary" onClick={save}>Save keys</button>
-          <button className="btn-secondary" onClick={() => { resetStore(); setLocalGroq(''); setLocalFire('') }}>Remove keys</button>
+          <button className="btn-secondary" onClick={() => { resetStore(); setLocalGroq(''); setLocalFire(''); setLocalModel('') }}>Remove keys</button>
         </div>
 
         <div className="mt-6 border-t pt-4">
